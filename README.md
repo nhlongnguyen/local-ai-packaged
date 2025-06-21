@@ -129,7 +129,10 @@ Before running the services, you need to set up your environment variables for S
 
 ---
 
-The project includes a `start_services.py` script that handles starting both the Supabase and local AI services. The script accepts a `--profile` flag to specify which GPU configuration to use.
+The project includes a `start_services.py` script that handles starting both the Supabase and local AI services. The script accepts several flags:
+- `--profile` to specify which GPU configuration to use
+- `--environment` to choose between private (default) and public deployment modes
+- `--rebuild` to force container rebuilds when environment variables have changed
 
 ### For Nvidia GPU users
 
@@ -187,19 +190,34 @@ Additionally, after you see "Editor is now accessible via: http://localhost:5678
 python start_services.py --profile cpu
 ```
 
-### The environment argument
-The **start-services.py** script offers the possibility to pass one of two options for the environment argument, **private** (default environment) and **public**:
-- **private:** you are deploying the stack in a safe environment, hence a lot of ports can be made accessible without having to worry about security
-- **public:** the stack is deployed in a public environment, which means the attack surface should be made as small as possible. All ports except for 80 and 443 are closed
+### Additional script options
 
-The stack initialized with
+The **start-services.py** script offers several additional options:
+
+#### Environment argument
+- **private** (default): you are deploying the stack in a safe environment, hence a lot of ports can be made accessible without having to worry about security
+- **public**: the stack is deployed in a public environment, which means the attack surface should be made as small as possible. All ports except for 80 and 443 are closed
+
 ```bash
-   python start_services.py --profile gpu-nvidia --environment private
-   ```
-equals the one initialized with
+# Private environment (default)
+python start_services.py --profile gpu-nvidia --environment private
+# or simply
+python start_services.py --profile gpu-nvidia
+
+# Public environment
+python start_services.py --profile gpu-nvidia --environment public
+```
+
+#### Rebuild option
+Use the `--rebuild` flag when you've made changes to environment variables in your `.env` file and need to force containers to rebuild to pick up the new values:
+
 ```bash
-   python start_services.py --profile gpu-nvidia
-   ```
+# Rebuild containers to pick up environment changes
+python start_services.py --profile gpu-nvidia --rebuild
+
+# Combine with environment option
+python start_services.py --profile gpu-nvidia --environment public --rebuild
+```
 
 ## Deploying to the Cloud
 
@@ -225,6 +243,11 @@ Before running the above commands to pull the repo and install everything:
 
 ```bash
    python3 start_services.py --profile gpu-nvidia --environment public
+   ```
+
+   If you've made changes to environment variables, add the `--rebuild` flag:
+   ```bash
+   python3 start_services.py --profile gpu-nvidia --environment public --rebuild
    ```
 
 3. Set up A records for your DNS provider to point your subdomains you'll set up in the .env file for Caddy
@@ -317,6 +340,13 @@ python start_services.py --profile <your-profile>
 Replace `<your-profile>` with one of: `cpu`, `gpu-nvidia`, `gpu-amd`, or `none`.
 
 Note: The `start_services.py` script itself does not update containers - it only restarts them or pulls them if you are downloading these containers for the first time. To get the latest versions, you must explicitly run the commands above.
+
+Alternatively, you can use the `--rebuild` flag to force rebuilding containers, which is useful when you've updated environment variables:
+
+```bash
+# Rebuild containers with environment changes
+python start_services.py --profile <your-profile> --rebuild
+```
 
 ## Troubleshooting
 

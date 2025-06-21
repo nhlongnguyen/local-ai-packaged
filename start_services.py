@@ -14,11 +14,95 @@ import time
 import argparse
 import platform
 import sys
+import secrets
+import string
 
 def run_command(cmd, cwd=None):
     """Run a shell command and print it."""
     print("Running:", " ".join(cmd))
     subprocess.run(cmd, cwd=cwd, check=True)
+
+def generate_secret(length=32):
+    """Generate a cryptographically secure random string."""
+    alphabet = string.ascii_letters + string.digits
+    return ''.join(secrets.choice(alphabet) for _ in range(length))
+
+def generate_hex_secret(length=32):
+    """Generate a hex secret using secrets module."""
+    return secrets.token_hex(length)
+
+def update_env_secrets():
+    """Update .env file with proper secrets if they contain placeholder values."""
+    env_path = ".env"
+    if not os.path.exists(env_path):
+        print("Warning: .env file not found")
+        return
+    
+    print("Checking and updating environment secrets...")
+    
+    # Read current .env file
+    with open(env_path, 'r') as f:
+        content = f.read()
+    
+    updated = False
+    
+    # Define replacements for placeholder values
+    replacements = {
+        'LOGFLARE_PUBLIC_ACCESS_TOKEN=your-super-secret-and-long-logflare-key-public': 
+            f'LOGFLARE_PUBLIC_ACCESS_TOKEN={generate_hex_secret(32)}',
+        'LOGFLARE_PRIVATE_ACCESS_TOKEN=your-super-secret-and-long-logflare-key-private': 
+            f'LOGFLARE_PRIVATE_ACCESS_TOKEN={generate_hex_secret(32)}',
+        'VAULT_ENC_KEY=your-vault-encryption-key-32-chars-min': 
+            f'VAULT_ENC_KEY={generate_secret(32)}',
+        'N8N_ENCRYPTION_KEY=super-secret-key': 
+            f'N8N_ENCRYPTION_KEY={generate_hex_secret(32)}',
+        'N8N_USER_MANAGEMENT_JWT_SECRET=even-more-secret': 
+            f'N8N_USER_MANAGEMENT_JWT_SECRET={generate_hex_secret(32)}',
+        'CLICKHOUSE_PASSWORD=super-secret-key-1': 
+            f'CLICKHOUSE_PASSWORD={generate_secret(32)}',
+        'MINIO_ROOT_PASSWORD=super-secret-key-2': 
+            f'MINIO_ROOT_PASSWORD={generate_secret(32)}',
+        'LANGFUSE_SALT=super-secret-key-3': 
+            f'LANGFUSE_SALT={generate_hex_secret(32)}',
+        'NEXTAUTH_SECRET=super-secret-key-4': 
+            f'NEXTAUTH_SECRET={generate_hex_secret(32)}',
+        'ENCRYPTION_KEY=generate-with-openssl': 
+            f'ENCRYPTION_KEY={generate_hex_secret(32)}'
+    }
+    
+    # Apply replacements
+    for old_value, new_value in replacements.items():
+        if old_value in content:
+            content = content.replace(old_value, new_value)
+            updated = True
+            print(f"Updated: {old_value.split('=')[0]}")
+    
+    # Write back if updated
+    if updated:
+        with open(env_path, 'w') as f:
+            f.write(content)
+        print("Environment secrets updated successfully!")
+    else:
+        print("Environment secrets are already configured.")
+
+def clean_supabase_database():
+    """Clean Supabase database data if analytics is failing."""
+    db_data_path = os.path.join("supabase", "docker", "volumes", "db", "data")
+    
+    if os.path.exists(db_data_path):
+        print("Found existing Supabase database data.")
+        print("If you're experiencing analytics startup issues, you may need to reset the database.")
+        print("This will delete all existing data and reinitialize the database.")
+        
+        response = input("Reset Supabase database? (y/N): ").lower().strip()
+        if response == 'y':
+            print("Backing up and removing database data...")
+            backup_path = f"{db_data_path}.backup.{int(time.time())}"
+            shutil.move(db_data_path, backup_path)
+            print(f"Database data backed up to: {backup_path}")
+            print("Database will be reinitialized on next startup.")
+            return True
+    return False
 
 def clone_supabase_repo():
     """Clone the Supabase repository using sparse checkout if not already present."""
@@ -54,16 +138,19 @@ def stop_existing_containers(profile=None):
     cmd.extend(["-f", "docker-compose.yml", "down"])
     run_command(cmd)
 
-def start_supabase(environment=None):
+def start_supabase(environment=None, rebuild=False):
     """Start the Supabase services (using its compose file)."""
     print("Starting Supabase services...")
     cmd = ["docker", "compose", "-p", "localai", "-f", "supabase/docker/docker-compose.yml"]
     if environment and environment == "public":
         cmd.extend(["-f", "docker-compose.override.public.supabase.yml"])
     cmd.extend(["up", "-d"])
+    if rebuild:
+        print("Rebuilding Supabase containers to pick up environment changes...")
+        cmd.append("--build")
     run_command(cmd)
 
-def start_local_ai(profile=None, environment=None):
+def start_local_ai(profile=None, environment=None, rebuild=False):
     """Start the local AI services (using its compose file)."""
     print("Starting local AI services...")
     cmd = ["docker", "compose", "-p", "localai"]
@@ -75,6 +162,9 @@ def start_local_ai(profile=None, environment=None):
     if environment and environment == "public":
         cmd.extend(["-f", "docker-compose.override.public.yml"])
     cmd.extend(["up", "-d"])
+    if rebuild:
+        print("Rebuilding local AI containers to pick up environment changes...")
+        cmd.append("--build")
     run_command(cmd)
 
 def generate_searxng_secret_key():
@@ -223,7 +313,18 @@ def main():
                       help='Profile to use for Docker Compose (default: cpu)')
     parser.add_argument('--environment', choices=['private', 'public'], default='private',
                       help='Environment to use for Docker Compose (default: private)')
+    parser.add_argument('--rebuild', action='store_true',
+                      help='Rebuild containers to pick up environment variable changes')
+    parser.add_argument('--reset-db', action='store_true',
+                      help='Reset Supabase database data (use if analytics fails to start)')
     args = parser.parse_args()
+
+    # Update environment secrets if needed
+    update_env_secrets()
+
+    # Handle database reset if requested
+    if args.reset_db:
+        clean_supabase_database()
 
     clone_supabase_repo()
     prepare_supabase_env()
@@ -235,14 +336,21 @@ def main():
     stop_existing_containers(args.profile)
 
     # Start Supabase first
-    start_supabase(args.environment)
+    start_supabase(args.environment, args.rebuild)
 
     # Give Supabase some time to initialize
     print("Waiting for Supabase to initialize...")
-    time.sleep(10)
+    time.sleep(15)  # Increased wait time for analytics
 
     # Then start the local AI services
-    start_local_ai(args.profile, args.environment)
+    start_local_ai(args.profile, args.environment, args.rebuild)
+
+    print("\n" + "="*60)
+    print("🚀 Services are starting up!")
+    print("📊 Supabase Studio: http://localhost:8000")
+    print("🤖 n8n: http://localhost:5678")
+    print("💬 Open WebUI: http://localhost:3000")
+    print("="*60)
 
 if __name__ == "__main__":
     main()
